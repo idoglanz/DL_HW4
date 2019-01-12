@@ -121,24 +121,37 @@ def RNN_model(output_size, max_length=100, LSTM_state_size = 512):
 
 def generate_review(model, max_length, id_to_word, seed, sent='positive'):
     if sent is "positive":
-        sentiment = np.array(1)
+        sentiment = np.array([1])
     else:
-        sentiment = np.array(0)
-    review = np.zeros(max_length)
-    review[0] = seed
-
-    for i in range(2, max_length-1):
-        if review[i] != 0:
-            next_word = model.predict([review.reshape(-1, max_length, 1), sentiment.reshape(-1, 1, 1)])
+        sentiment = np.array([0])
+    review = np.zeros((1, max_length))
+    print(review.shape)
+    review[0, 0] = 1
+    for i in range(0, max_length - 1):
+        if review[0, i] != 0.0:
+            next_word = model.predict([review, sentiment])
+            print()
             next_word = np.argmax(next_word)
-            review[i+1] = next_word
+            review[0, i + 1] = next_word
         else:
             break
 
+    rev4print = review[0, :].tolist()
+
     print('The predicted word is: ')
-    print(' '.join(id_to_word.get(w) for w in review))
+    print(' '.join(id_to_word.get(w) for w in rev4print))
 
     return review
+
+
+def soft_sample(input):  # assume input is after a softmax layer hence summing to 1
+    chosen = np.random.multinomial(1, input, 1)
+    return chosen
+
+
+generate_review(model, max_len, id2word, seed, sent="negative")
+
+
 
 
 max_len = 100
@@ -146,5 +159,4 @@ seed = 1
 sent = "positive"
 
 [model, id2word] = main()
-
 
