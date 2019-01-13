@@ -14,6 +14,8 @@ from keras.models import Model
 from keras.layers import Input, Dense, BatchNormalization, LSTM, Embedding, Dropout, TimeDistributed
 from keras.layers.merge import add, concatenate
 from keras.callbacks import ModelCheckpoint
+from random import randint
+from nltk.translate.bleu_score import corpus_bleu
 
 # ------------------------------------------------- Load IMDB reviews --------------------------------------------------
 
@@ -40,6 +42,7 @@ def main():
     word_to_id["<PAD>"] = 0
     word_to_id["<START>"] = 1
     word_to_id["<OOV>"] = 2
+
     id_to_word = {v: k for k, v in word_to_id.items()}
 
     # for i in range(95, 120):
@@ -69,8 +72,9 @@ def sequence_generator(reviews, sentiment, max_len=100,):
     y = []
 
     for index, review in enumerate(reviews):
+        n_sequences = randint(50, 100)
         for i in range(1, len(review)):
-            if i <= max_len:
+            if i <= n_sequences:
                 x_review.append(review[:i])
                 y.append(review[i])
                 x_sentiment.append(sentiment[index])
@@ -119,19 +123,32 @@ def RNN_model(output_size, max_length=100, LSTM_state_size = 512):
     return model
 
 
-def generate_review(model, max_length, id_to_word, seed, sent='positive'):
+def generate_review(model, max_length, id_to_word, seed, sent='positive', mix_ind=None):
     if sent is "positive":
-        sentiment = np.array([1])
-    else:
-        sentiment = np.array([0])
+        if mix_ind is None:
+            sentiment = np.ones((1, max_length))
+        else:
+            sentiment = np.ones((1, max_length))
+            sentiment[0, mix_ind:] = 0
+
+    elif sent is "negative":
+        if mix_ind is None:
+            sentiment = np.zeros((1, max_length))
+
+        else:
+            sentiment = np.zeros((1, max_length))
+            sentiment[0, mix_ind:] = 1
+
     review = np.zeros((1, max_length))
-    print(review.shape)
-    review[0, 0] = 1
-    for i in range(0, max_length - 1):
+    print(sentiment)
+
+    for i in range(len(seed)):
+        review[0, i] = seed[i]
+
+    for i in range(len(seed) - 1, max_length - 1):
         if review[0, i] != 0.0:
-            next_word = model.predict([review, sentiment])
-            print()
-            next_word = np.argmax(next_word)
+            next_word = model.predict([review, sentiment[:, i]])
+            next_word = soft_sample(next_word, greedy=False, ignore_OOV=True)
             review[0, i + 1] = next_word
         else:
             break
@@ -144,19 +161,68 @@ def generate_review(model, max_length, id_to_word, seed, sent='positive'):
     return review
 
 
-def soft_sample(input):  # assume input is after a softmax layer hence summing to 1
-    chosen = np.random.multinomial(1, input, 1)
-    return chosen
+def soft_sample(options, greedy=False, ignore_OOV=True, n_max=1):
+    if greedy is True:
+        if ignore_OOV is False:
+            return np.argmax(options)
+        else:
+            while np.argmax(options) == 2:
+                options[0, int(np.argmax(options))] = 0
+            #             return np.argmax(options)
+            return n_max(options, n_max, rand=True)
+    else:
+        norm_preds = (options / (np.sum(options + 0.0000000001)))[0, :].tolist()
+        chosen = np.random.multinomial(1, norm_preds, 1)
+        if ignore_OOV is False:
+            return np.argmax(chosen)
+        else:
+            while np.argmax(chosen) == 2:
+                options[0, int(np.argmax(chosen))] = 0
+                norm_preds = (options / (np.sum(options + 0.0000000001)))[0, :].tolist()
+                chosen = np.random.multinomial(1, norm_preds, 1)
+    return np.argmax(chosen)
 
 
-generate_review(model, max_len, id2word, seed, sent="negative")
+def n_max(array, n, rand=True):
+    if rand is True:
+        n = randint(1, n)
+    for i in range(n - 1):
+        array[0, np.argmax(array)] = 0
+    return np.argmax(array)
 
 
+def seed_gen(sentence, word2id=None):
+    sentence = ' '.join(("<START>", sentence))
+    if word2id is None:
+        word2id = imdb.get_word_index()
+        word2id = {k: (v + 3) for k, v in word2id.items()}
+        word2id["<PAD>"] = 0
+        word2id["<START>"] = 1
+        word2id["<OOV>"] = 2
 
+    seed_out = [word2id[word] for word in sentence.split()]
+    return seed_out
+
+
+def BLEU_evaluate(sampled_data, prediction):
+    score = [0]*4
+    for i in range(len(sampled_data)):
+        score[0] += corpus_bleu(sampled_data[i,:], prediction, weights=(1.0, 0, 0, 0))
+        score[1] += corpus_bleu(sampled_data[i,:], prediction, weights=(0.5, 0.5, 0, 0))
+        score[2] += corpus_bleu(sampled_data[i,:], prediction, weights=(0.3, 0.3, 0.3, 0))
+        score[3] += corpus_bleu(sampled_data[i,:], prediction, weights=(0.25, 0.25, 0.25, 0.25))
+    score /= len(sampled_data)
+    return score
+
+
+seed_str = 'the movie was'
+generate_review(model, max_len, id2word, seed=seed_gen(seed_str, word2id=word2id), sent="positive", mix_ind=10)
 
 max_len = 100
 seed = 1
 sent = "positive"
 
-[model, id2word] = main()
-
+# [model, id2word] = main()
+seed_sentence = 'the movie was'
+seed_num = seed_gen(seed_sentence)
+print(seed_num)
